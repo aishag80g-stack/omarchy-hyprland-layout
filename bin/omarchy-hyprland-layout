@@ -28,6 +28,7 @@ set -uo pipefail
 
 LAYOUTS_DIR="$HOME/.local/state/omarchy/hyprland-layouts"
 mkdir -p "$LAYOUTS_DIR"
+chmod 700 "$LAYOUTS_DIR" 2>/dev/null || true   # layouts contain window titles
 VISION_URL="${OMARCHY_LAYOUT_VISION_URL:-http://127.0.0.1:1234/v1}"
 VISION_MODEL="${OMARCHY_LAYOUT_VISION_MODEL:-}"
 
@@ -53,7 +54,9 @@ cmd_save() {
   [[ -n "$amon" ]] || die "could not read the active monitor"
 
   local file="$LAYOUTS_DIR/$name.json" tmp
-  tmp=$(mktemp)
+  # private temp dir: window titles/classes must not be world-readable (0700)
+  tmpdir=$(mktemp -d)
+  tmp="$tmpdir/win"
   if [[ -n "$all" ]]; then
     monitors | jq '[.[] | {name, position, width, height}]' > "$tmp.mon"
     clients | jq '[.[] | select(.fullscreen==false) | {
@@ -72,7 +75,7 @@ cmd_save() {
   jq -n --slurpfile mon "$tmp.mon" --slurpfile win "$tmp.win" --arg name "$name" \
      --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
      '{version: 2, name: $name, savedAt: $ts, relative: false, monitors: $mon[0], windows: $win[0]}' > "$file"
-  rm -f "$tmp.mon" "$tmp.win"
+  rm -rf "$tmpdir"
   local n; n=$(jq '.windows | length' "$file")
   notify "Layout '$name' saved ($n windows)"
   echo "Layout '$name' saved ($n windows)."
@@ -104,15 +107,15 @@ ask_vision() { # $1 = image path -> prints strict JSON {windows:[...]}
   # downscale big captures (geometry is requested as fractions, so detail
   # loss is fine) and build the payload in a file: a 5K screenshot blows
   # the argv limit when passed inline.
-  local small; small=$(mktemp --suffix=.png)
+  local vtmp; vtmp=$(mktemp -d)   # private: screenshot content
+  local small="$vtmp/small.png"
   if command -v convert >/dev/null 2>&1; then
     convert "$img" -resize 1920x1080\> "$small" 2>/dev/null || cp "$img" "$small"
   else
     cp "$img" "$small"
   fi
-  b64file=$(mktemp)
+  local b64file="$vtmp/b64" payload="$vtmp/payload" resp
   base64 -w0 "$small" > "$b64file"
-  local payload resp; payload=$(mktemp)
   jq -n --arg m "$model" --rawfile b64 "$b64file" '{
     model: $m, temperature: 0,
     messages: [{role: "user", content: [
@@ -121,8 +124,8 @@ ask_vision() { # $1 = image path -> prints strict JSON {windows:[...]}
     ]}]}
   ' > "$payload"
   resp=$(curl -sf --max-time 180 "$VISION_URL/chat/completions" \
-    -H "Content-Type: application/json" --data-binary "@$payload") || { rm -f "$small" "$payload" "$b64file"; die "vision request failed ($VISION_URL)"; }
-  rm -f "$small" "$payload" "$b64file"
+    -H "Content-Type: application/json" --data-binary "@$payload") || { rm -rf "$vtmp"; die "vision request failed ($VISION_URL)"; }
+  rm -rf "$vtmp"
   local content
   content=$(jq -r '.choices[0].message.content // empty' <<<"$resp")
   [[ -n "$content" ]] || die "vision model returned nothing"
@@ -147,7 +150,9 @@ cmd_from_image() {
   echo "(type the app name if it is running — I will recognize it — or the command to launch it; Enter to skip)" >&2
 
   local ws; ws=$(hyprctl activeworkspace -j | jq -r '.id')
-  local out="$LAYOUTS_DIR/$name.json" tmp; tmp=$(mktemp)
+  local out="$LAYOUTS_DIR/$name.json" tmp
+  local tmpdir; tmpdir=$(mktemp -d)   # private: holds app names/classes
+  tmp="$tmpdir/win"
   echo '[]' > "$tmp"
 
   local i
@@ -192,10 +197,10 @@ cmd_from_image() {
   done
 
   local count; count=$(jq 'length' "$tmp")
-  [[ "$count" -gt 0 ]] || { rm -f "$tmp"; die "no apps assigned, layout not saved"; }
+  [[ "$count" -gt 0 ]] || { rm -rf "$tmpdir"; die "no apps assigned, layout not saved"; }
   jq -n --slurpfile win "$tmp" --arg name "$name" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
      '{version: 2, name: $name, savedAt: $ts, relative: true, monitors: [], windows: $win[0]}' > "$out"
-  rm -f "$tmp"
+  rm -rf "$tmpdir"
   notify "Layout '$name' created from image ($count windows)"
   echo "Layout '$name' saved ($count windows, relative geometry — works at any resolution)."
   echo "Apply it with: omarchy-hyprland-layout restore $name"
