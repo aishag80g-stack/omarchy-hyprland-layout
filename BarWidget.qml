@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Ui
 
 BarWidget {
@@ -22,7 +23,10 @@ BarWidget {
   Process {
     id: listProc
     command: ["bash", "-lc", root.cli + " list"]
-    stdout: StdoutCollector { id: listOut }
+    stdout: StdioCollector {
+      id: listOut
+      onStreamFinished: root.omarchyNotificationSend("Layouts:\n" + (listOut.text || "none"))
+    }
   }
 
   BarIconButton {
@@ -34,7 +38,6 @@ BarWidget {
     onPressed: function(b) {
       if (b === Qt.RightButton) {
         if (!listProc.running) listProc.running = true
-        omarchyNotificationSend("Layouts:\n" + (listOut.text || "none"))
       } else {
         if (!restoreProc.running) restoreProc.running = true
       }
