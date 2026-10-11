@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.aishag80g-stack.hyprland-layout",
+  "name": "Hyprland layout restore",
+  "version": "1.0.0",
+  "author": "aishag80g-stack",
+  "description": "Define window layouts from a screenshot and restore them with one click or a keybind.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Window layout restore",
+    "description": "Left-click restores the last saved window layout; right-click lists saved layouts. Layouts are defined with the bundled CLI (from a screenshot or the current desktop) and stored with relative geometry, so they work at any resolution.",
+    "category": "Compositor",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

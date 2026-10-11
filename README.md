@@ -1,0 +1,69 @@
+# Hyprland layout restore
+
+Define a window layout by **pasting a screenshot** of your desktop, then restore
+that exact arrangement any time — from the bar or a keybind.
+
+The bundled CLI (`bin/omarchy-hyprland-layout`) works on any Hyprland with the
+Lua config API (Omarchy). Geometry is stored **relative** (percent of the
+monitor), so a layout defined on one screen works at any resolution.
+
+## How it works
+
+```bash
+# 1. Define a layout from a screenshot of an arrangement you like:
+omarchy-hyprland-layout from-image screenshot.png my-setup
+#    A vision model detects every window region; you tell it which app
+#    belongs in each one (by name if it is running, or a launch command).
+
+# 2. Restore it — windows are moved, sized and launched to match:
+omarchy-hyprland-layout restore my-setup
+
+# Other commands:
+omarchy-hyprland-layout save <name> [--all]   # snapshot the current desktop
+omarchy-hyprland-layout restore-last          # most recent layout
+omarchy-hyprland-layout list | delete <name>
+```
+
+Layouts are stored in `~/.local/state/omarchy/hyprland-layouts/`.
+
+## Vision backend
+
+`from-image` uses any OpenAI-compatible vision endpoint:
+
+- `OMARCHY_LAYOUT_VISION_URL` — default `http://127.0.0.1:1234/v1` (LM Studio)
+- `OMARCHY_LAYOUT_VISION_MODEL` — default: the first model the endpoint serves
+
+`save` / `restore` need no model at all.
+
+## Install
+
+```bash
+omarchy plugin add https://github.com/aishag80g-stack/omarchy-hyprland-layout --enable
+```
+
+Then add the widget to your bar (Omarchy menu → Bar → Widgets →
+"Window layout restore"), or bind the CLI to a key directly, e.g. in
+`~/.config/hypr/bindings.lua`:
+
+```lua
+o.bind("SUPER, T", "exec", "~/.config/omarchy/plugins/io.github.aishag80g-stack.hyprland-layout/bin/omarchy-hyprland-layout restore-last")
+```
+
+## Remove
+
+```bash
+omarchy plugin remove io.github.aishag80g-stack.hyprland-layout
+```
+
+Removal only deletes the plugin folder; your saved layouts stay in
+`~/.local/state/omarchy/hyprland-layouts/` and are never touched.
+
+## Dependencies
+
+`bash`, `jq`, `curl`, `hyprctl` (Hyprland ≥ 0.56 Lua API), ImageMagick
+(optional, downscales large screenshots), and an OpenAI-compatible vision
+endpoint for `from-image` only.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

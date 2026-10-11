@@ -1,0 +1,356 @@
+#!/usr/bin/env bash
+# omarchy-hyprland-layout — define and apply window layouts, from a screenshot
+# or from your current desktop.
+#
+#   omarchy-hyprland-layout from-image <screenshot.png> [name]
+#       Look at a screenshot of a desktop arrangement, detect every window
+#       region, ask you which app belongs in each one, and save it as a
+#       layout. Geometry is stored RELATIVE (percent of the screen), so the
+#       same arrangement works on any monitor resolution.
+#
+#   omarchy-hyprland-layout save <name> [--all]
+#       Snapshot the current window arrangement (exact pixels, current
+#       monitor; --all for every monitor).
+#
+#   omarchy-hyprland-layout restore <name>
+#       Re-apply a saved layout: open windows are moved and placed at the
+#       saved geometry; windows that are not open are launched with the
+#       command recorded when the layout was defined, then placed.
+#
+#   omarchy-hyprland-layout list | delete <name>
+#
+# Vision backend for from-image (any OpenAI-compatible endpoint):
+#   OMARCHY_LAYOUT_VISION_URL    default http://127.0.0.1:1234/v1 (LM Studio)
+#   OMARCHY_LAYOUT_VISION_MODEL  default: first model the endpoint serves
+#
+# Layouts live in ~/.local/state/omarchy/hyprland-layouts/<name>.json
+set -uo pipefail
+
+LAYOUTS_DIR="$HOME/.local/state/omarchy/hyprland-layouts"
+mkdir -p "$LAYOUTS_DIR"
+VISION_URL="${OMARCHY_LAYOUT_VISION_URL:-http://127.0.0.1:1234/v1}"
+VISION_MODEL="${OMARCHY_LAYOUT_VISION_MODEL:-}"
+
+die() { echo "omarchy-hyprland-layout: $*" >&2; exit 1; }
+ev() { hyprctl eval "$1" >/dev/null 2>&1; }
+dsp() { ev "hl.dispatch(hl.dsp.$1)"; }
+notify() { omarchy-notification-send -g "󱂬" "$1" 2>/dev/null || true; }
+
+# Buffer hyprctl output before piping to jq (hyprwm#16206: closing the pipe
+# early makes hyprctl abort with SIGABRT).
+clients() { local out; out=$(hyprctl clients -j 2>/dev/null); printf '%s' "$out"; }
+monitors() { local out; out=$(hyprctl monitors -j 2>/dev/null); printf '%s' "$out"; }
+active_monitor() { monitors | jq -r 'first(.[] | select(.focused==true)) | .name'; }
+
+valid_name() { [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid layout name '$1' (letters, numbers, dot, dash, underscore)"; }
+
+# ---------------------------------------------------------------- save
+cmd_save() {
+  local name="${1:-}"; shift || true
+  valid_name "$name"
+  local all=""; [[ "${1:-}" == "--all" ]] && all=1
+  local amon; amon=$(active_monitor)
+  [[ -n "$amon" ]] || die "could not read the active monitor"
+
+  local file="$LAYOUTS_DIR/$name.json" tmp
+  tmp=$(mktemp)
+  if [[ -n "$all" ]]; then
+    monitors | jq '[.[] | {name, position, width, height}]' > "$tmp.mon"
+    clients | jq '[.[] | select(.fullscreen==false) | {
+      class: .initialClass, title, workspace: .workspace.id, monitor,
+      at, size, floating: (.floating==true), pinned: (.pinned==true),
+      launch: null
+    }]' > "$tmp.win"
+  else
+    monitors | jq --arg m "$amon" '[.[] | select(.name==$m) | {name, position, width, height}]' > "$tmp.mon"
+    clients | jq --arg m "$amon" '[.[] | select(.monitor==$m and .fullscreen==false) | {
+      class: .initialClass, title, workspace: .workspace.id, monitor,
+      at, size, floating: (.floating==true), pinned: (.pinned==true),
+      launch: null
+    }]' > "$tmp.win"
+  fi
+  jq -n --slurpfile mon "$tmp.mon" --slurpfile win "$tmp.win" --arg name "$name" \
+     --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+     '{version: 2, name: $name, savedAt: $ts, relative: false, monitors: $mon[0], windows: $win[0]}' > "$file"
+  rm -f "$tmp.mon" "$tmp.win"
+  local n; n=$(jq '.windows | length' "$file")
+  notify "Layout '$name' saved ($n windows)"
+  echo "Layout '$name' saved ($n windows)."
+}
+
+# ------------------------------------------------------------- from-image
+describe_pos() { # x y w h (0..1) -> human position
+  local x=$1 y=$2 w=$3 h=$4
+  local cx cy
+  cx=$(awk -v v="$x" -v w="$w" 'BEGIN{printf "%.2f", v+w/2}')
+  cy=$(awk -v v="$y" -v h="$h" 'BEGIN{printf "%.2f", v+h/2}')
+  local col row
+  if   awk -v v="$cx" 'BEGIN{exit !(v<0.34)}'; then col="left"
+  elif awk -v v="$cx" 'BEGIN{exit !(v<0.67)}'; then col="center"
+  else col="right"; fi
+  if   awk -v v="$cy" 'BEGIN{exit !(v<0.34)}'; then row="top"
+  elif awk -v v="$cy" 'BEGIN{exit !(v<0.67)}'; then row="middle"
+  else row="bottom"; fi
+  echo "$col-$row"
+}
+
+ask_vision() { # $1 = image path -> prints strict JSON {windows:[...]}
+  local img="$1" b64 model
+  model="$VISION_MODEL"
+  if [[ -z "$model" ]]; then
+    model=$(curl -sf --max-time 10 "$VISION_URL/models" | jq -r '.data[0].id // empty')
+  fi
+  [[ -n "$model" ]] || die "no vision model available at $VISION_URL — set OMARCHY_LAYOUT_VISION_URL / OMARCHY_LAYOUT_VISION_MODEL"
+  # downscale big captures (geometry is requested as fractions, so detail
+  # loss is fine) and build the payload in a file: a 5K screenshot blows
+  # the argv limit when passed inline.
+  local small; small=$(mktemp --suffix=.png)
+  if command -v convert >/dev/null 2>&1; then
+    convert "$img" -resize 1920x1080\> "$small" 2>/dev/null || cp "$img" "$small"
+  else
+    cp "$img" "$small"
+  fi
+  b64file=$(mktemp)
+  base64 -w0 "$small" > "$b64file"
+  local payload resp; payload=$(mktemp)
+  jq -n --arg m "$model" --rawfile b64 "$b64file" '{
+    model: $m, temperature: 0,
+    messages: [{role: "user", content: [
+      {type: "text", text: "This is a screenshot of a Linux desktop with tiled windows. For EVERY visible window (ignore the taskbar/panel and wallpaper), report its bounding box as fractions of the full image (x,y,w,h between 0 and 1), a short guess of what kind of app it is, and any readable title-bar text. Reply with STRICT JSON only, no markdown fences: {\"windows\":[{\"x\":0,\"y\":0,\"w\":0,\"h\":0,\"guess\":\"\",\"title\":\"\"}]}"},
+      {type: "image_url", image_url: {url: ("data:image/png;base64," + $b64)}}
+    ]}]}
+  ' > "$payload"
+  resp=$(curl -sf --max-time 180 "$VISION_URL/chat/completions" \
+    -H "Content-Type: application/json" --data-binary "@$payload") || { rm -f "$small" "$payload" "$b64file"; die "vision request failed ($VISION_URL)"; }
+  rm -f "$small" "$payload" "$b64file"
+  local content
+  content=$(jq -r '.choices[0].message.content // empty' <<<"$resp")
+  [[ -n "$content" ]] || die "vision model returned nothing"
+  # strip possible code fences / prose around the object
+  content=$(sed -n 's/.*\({.*windows.*}\).*/\1/p' <<<"$content" | head -1)
+  jq -e '.windows | length > 0' <<<"$content" >/dev/null 2>&1 || die "could not detect windows in the image"
+  printf '%s' "$content"
+}
+
+cmd_from_image() {
+  local img="${1:-}" name="${2:-}"
+  [[ -f "$img" ]] || die "image not found: $img"
+  if [[ -z "$name" ]]; then
+    read -rp "Layout name (no spaces): " name
+  fi
+  valid_name "$name"
+
+  echo "Analyzing image..." >&2
+  local spec; spec=$(ask_vision "$img")
+  local n; n=$(jq '.windows | length' <<<"$spec")
+  echo "Detected $n windows. Tell me which app belongs in each one." >&2
+  echo "(type the app name if it is running — I will recognize it — or the command to launch it; Enter to skip)" >&2
+
+  local ws; ws=$(hyprctl activeworkspace -j | jq -r '.id')
+  local out="$LAYOUTS_DIR/$name.json" tmp; tmp=$(mktemp)
+  echo '[]' > "$tmp"
+
+  local i
+  for ((i=0; i<n; i++)); do
+    local x y w h guess title pos
+    x=$(jq -r --argjson i "$i" '.windows[$i].x' <<<"$spec")
+    y=$(jq -r --argjson i "$i" '.windows[$i].y' <<<"$spec")
+    w=$(jq -r --argjson i "$i" '.windows[$i].w' <<<"$spec")
+    h=$(jq -r --argjson i "$i" '.windows[$i].h' <<<"$spec")
+    guess=$(jq -r --argjson i "$i" '.windows[$i].guess // ""' <<<"$spec")
+    title=$(jq -r --argjson i "$i" '.windows[$i].title // ""' <<<"$spec")
+    pos=$(describe_pos "$x" "$y" "$w" "$h")
+    # the model must return numbers; skip malformed entries instead of
+    # poisoning the layout file
+    if ! jq -e 'type=="number"' <<<"$x" >/dev/null 2>&1 || ! jq -e 'type=="number"' <<<"$y" >/dev/null 2>&1 || ! jq -e 'type=="number"' <<<"$w" >/dev/null 2>&1 || ! jq -e 'type=="number"' <<<"$h" >/dev/null 2>&1; then
+      echo "  (window $((i+1)): invalid geometry from the model, skipped)" >&2
+      continue
+    fi
+    local hint=""
+    [[ -n "$guess" ]] && hint=" (looks like: $guess)"
+    [[ -n "$title" ]] && hint="$hint — title: $title"
+
+    local answer=""
+    read -rp "Ventana $((i+1)) [$pos, ${w}x${h}]$hint → app: " answer
+    [[ -z "$answer" ]] && continue
+
+    # try to match a running window by class or title substring
+    local cls=""
+    cls=$(clients | jq -r --arg a "$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')" \
+      'first(.[] | select((.initialClass|ascii_downcase|contains($a)) or (.title|ascii_downcase|contains($a)))) | .initialClass')
+    local entry
+    if [[ -n "$cls" ]]; then
+      entry=$(jq -n --arg c "$cls" --argjson x "$x" --argjson y "$y" --argjson w "$w" --argjson h "$h" --argjson ws "$ws" \
+        '{class:$c, title:null, workspace:$ws, monitor:null, rel:[$x,$y,$w,$h], at:null, size:null, floating:false, pinned:false, launch:null}')
+      echo "  → matched: $cls" >&2
+    else
+      entry=$(jq -n --arg c "$answer" --argjson x "$x" --argjson y "$y" --argjson w "$w" --argjson h "$h" --argjson ws "$ws" \
+        '{class:null, title:null, workspace:$ws, monitor:null, rel:[$x,$y,$w,$h], at:null, size:null, floating:false, pinned:false, launch:$c}')
+      echo "  → will launch with: $answer" >&2
+    fi
+    jq --argjson e "$entry" '. + [$e]' "$tmp" > "$tmp.new" && mv "$tmp.new" "$tmp"
+  done
+
+  local count; count=$(jq 'length' "$tmp")
+  [[ "$count" -gt 0 ]] || { rm -f "$tmp"; die "no apps assigned, layout not saved"; }
+  jq -n --slurpfile win "$tmp" --arg name "$name" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+     '{version: 2, name: $name, savedAt: $ts, relative: true, monitors: [], windows: $win[0]}' > "$out"
+  rm -f "$tmp"
+  notify "Layout '$name' created from image ($count windows)"
+  echo "Layout '$name' saved ($count windows, relative geometry — works at any resolution)."
+  echo "Apply it with: omarchy-hyprland-layout restore $name"
+}
+
+# ------------------------------------------------------------- restore
+place_window() { # $1=addr $2=x $3=y $4=w $5=h $6=pinned
+  local addr=$1 x=$2 y=$3 w=$4 h=$5 pin=$6
+  # Exact geometry requires floating: tiled windows are sized by the tiling
+  # tree. A restored layout reproduces the arrangement pixel-for-pixel as
+  # floating windows, which is what "copy this screenshot" means.
+  # NOTE: window.float is a TOGGLE — only dispatch it when the window is
+  # not already floating, or it would un-float it.
+  # Hyprland 0.56 Lua API: move takes {x,y} position, resize takes {x,y} size.
+  local is_float
+  is_float=$(clients | jq -r --arg a "$addr" 'first(.[] | select(.address==$a)) | .floating')
+  [[ "$is_float" == "false" ]] && { ev "hl.dispatch(hl.dsp.window.float({window='address:$addr'}))"; sleep 0.25; }
+  ev "hl.dispatch(hl.dsp.window.fullscreen_state({window='address:$addr', internal=0, client=0}))"
+  ev "hl.dispatch(hl.dsp.window.pin({window='address:$addr', state=$pin}))"
+  ev "hl.dispatch(hl.dsp.window.resize({window='address:$addr', x=$w, y=$h}))"
+  sleep 0.15
+  ev "hl.dispatch(hl.dsp.window.move({window='address:$addr', x=$x, y=$y}))"
+}
+
+cmd_restore() {
+  local name="${1:-}"; valid_name "$name"
+  local file="$LAYOUTS_DIR/$name.json"
+  [[ -f "$file" ]] || die "no layout named '$name' (list them with: omarchy-hyprland-layout list)"
+
+  local relative; relative=$(jq -r '.relative // false' "$file")
+
+  # For relative layouts, resolve the target monitor now (the focused one).
+  local m_x=0 m_y=0 m_w=0 m_h=0
+  if [[ "$relative" == "true" ]]; then
+    local amon; amon=$(active_monitor)
+    [[ -n "$amon" ]] || die "could not read the active monitor"
+    read -r m_x m_y m_w m_h < <(monitors | jq --arg m "$amon" -r 'first(.[] | select(.name==$m)) | "\(.position[0]) \(.position[1]) \(.width) \(.height)"')
+  fi
+
+  # 1. Pin saved workspaces to their monitors (absolute layouts only).
+  if [[ "$relative" != "true" ]]; then
+    while IFS=$'\t' read -r ws_id mon_name; do
+      [[ -z "$ws_id" || -z "$mon_name" || "$mon_name" == "null" ]] && continue
+      dsp "workspace.move({workspace=$ws_id, monitor='$mon_name'})"
+    done < <(jq -r '.windows[] | "\(.workspace)\t\(.monitor)"' "$file" | sort -u)
+  fi
+
+  # 2. Place each window.
+  local total; total=$(jq '.windows | length' "$file")
+  local k
+  for ((k=0; k<total; k++)); do
+    local wclass wtitle wws x y w h floating pinned launch
+    wclass=$(jq -r --argjson i "$k" '.windows[$i].class // empty' "$file")
+    wtitle=$(jq -r --argjson i "$k" '.windows[$i].title // empty' "$file")
+    wws=$(jq -r --argjson i "$k" '.windows[$i].workspace' "$file")
+    launch=$(jq -r --argjson i "$k" '.windows[$i].launch // empty' "$file")
+    floating=$(jq -r --argjson i "$k" '.windows[$i].floating // false' "$file")
+    pinned=$(jq -r --argjson i "$k" '.windows[$i].pinned // false' "$file")
+
+    if [[ "$relative" == "true" ]]; then
+      read -r x y w h < <(jq -r --argjson i "$k" --argjson mx "$m_x" --argjson my "$m_y" --argjson mw "$m_w" --argjson mh "$m_h" \
+        '.windows[$i].rel as $r | "\(($mx + ($r[0]*$mw)|floor)) \(($my + ($r[1]*$mh)|floor)) \(($r[2]*$mw)|floor) \(($r[3]*$mh)|floor)"' "$file")
+    else
+      read -r x y < <(jq -r --argjson i "$k" '.windows[$i].at | "\(.[0]) \(.[1])"' "$file")
+      read -r w h < <(jq -r --argjson i "$k" '.windows[$i].size | "\(.[0]) \(.[1])"' "$file")
+    fi
+
+    local addr=""
+    if [[ -n "$wclass" ]]; then
+      if [[ -n "$wtitle" ]]; then
+        addr=$(clients | jq -r --arg c "$wclass" --arg t "$wtitle" \
+          'first(.[] | select(.initialClass==$c and .title==$t)) | .address')
+      fi
+      [[ -z "$addr" ]] && addr=$(clients | jq -r --arg c "$wclass" \
+        'first(.[] | select(.initialClass==$c and .workspace.id=='"$wws"')) | .address')
+      [[ -z "$addr" ]] && addr=$(clients | jq -r --arg c "$wclass" \
+        'first(.[] | select(.initialClass==$c)) | .address')
+      if [[ -z "$addr" && -n "$launch" ]]; then
+        dsp "exec_cmd(\"[workspace $wws] $launch\")"
+        local t=0
+        while (( t < 40 )); do
+          addr=$(clients | jq -r --arg c "$wclass" 'first(.[] | select(.initialClass==$c)) | .address')
+          [[ -n "$addr" ]] && break
+          sleep 0.3; ((t++))
+        done
+      fi
+    elif [[ -n "$launch" ]]; then
+      # app unknown at save time: launch it, then grab the newest window
+      local before; before=$(clients | jq -r '.[].address' | sort)
+      dsp "exec_cmd(\"[workspace $wws] $launch\")"
+      local t=0
+      while (( t < 40 )); do
+        addr=$(clients | jq -r --arg b "$before" '[.[] | .address] as $now | ($now - ($b | split("\n")))[0] // empty' <<<"$(clients)" 2>/dev/null)
+        [[ -z "$addr" ]] && addr=$(comm -13 <(echo "$before") <(clients | jq -r '.[].address' | sort) | head -1)
+        [[ -n "$addr" ]] && break
+        sleep 0.3; ((t++))
+      done
+    fi
+    [[ -z "$addr" ]] && continue
+
+    dsp "window.move({window='address:$addr', workspace=$wws})"
+    sleep 0.15
+    place_window "$addr" "$x" "$y" "$w" "$h" "$pinned"
+  done
+
+  notify "Layout '$name' restored"
+  echo "Layout '$name' restored."
+}
+
+cmd_restore_last() {
+  local newest="" f
+  shopt -s nullglob
+  for f in "$LAYOUTS_DIR"/*.json; do
+    [[ -z "$newest" || "$f" -nt "$newest" ]] && newest="$f"
+  done
+  [[ -n "$newest" ]] || die "no layouts saved yet"
+  cmd_restore "$(basename "$newest" .json)"
+}
+
+cmd_list() {
+  shopt -s nullglob
+  local found=0
+  for f in "$LAYOUTS_DIR"/*.json; do
+    found=1
+    jq -r '"\(.name)  (\(.windows|length) windows, \(.savedAt))"' "$f"
+  done
+  [[ $found -eq 1 ]] || echo "No layouts yet. Create one with: omarchy-hyprland-layout from-image screenshot.png name"
+}
+
+cmd_delete() {
+  local name="${1:-}"; valid_name "$name"
+  local file="$LAYOUTS_DIR/$name.json"
+  [[ -f "$file" ]] || die "no layout named '$name'"
+  rm -f "$file"
+  echo "Layout '$name' deleted."
+}
+
+case "${1:-}" in
+  from-image) shift; cmd_from_image "$@" ;;
+  save)       shift; cmd_save "$@" ;;
+  restore)    shift; cmd_restore "$@" ;;
+  restore-last) cmd_restore_last ;;
+  list)       cmd_list ;;
+  delete)     shift; cmd_delete "$@" ;;
+  *) cat <<'EOF'
+Usage:
+  omarchy-hyprland-layout from-image <screenshot.png> [name]
+      define a layout by pasting a screenshot of your desktop
+  omarchy-hyprland-layout save <name> [--all]
+      snapshot the current window arrangement
+  omarchy-hyprland-layout restore <name>
+      apply a saved layout
+  omarchy-hyprland-layout restore-last
+      apply the most recently saved layout (used by the bar widget)
+  omarchy-hyprland-layout list | delete <name>
+EOF
+    exit 1 ;;
+esac
