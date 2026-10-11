@@ -30,7 +30,7 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: "󱂬"
-    tooltipText: "Restore last window layout (right-click: list layouts)"
+    tooltipText: "Restore saved desktop — apps launch in place (right-click: list layouts)"
     onPressed: function(b) {
       if (b === Qt.RightButton) {
         if (!listProc.running) listProc.running = true

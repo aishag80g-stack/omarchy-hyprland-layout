@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "id": "io.github.aishag80g-stack.hyprland-layout",
-  "name": "Hyprland layout restore",
+  "name": "Saved desktop layouts",
   "version": "1.0.0",
   "author": "aishag80g-stack",
-  "description": "Define window layouts from a screenshot and restore them with one click or a keybind.",
+  "description": "Save your desktop with its apps — from a screenshot or live — and restore it with one click: apps launch and land exactly where you left them, desktop ready to work.",
   "kinds": [
     "bar-widget"
   ],
@@ -12,8 +12,8 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Window layout restore",
-    "description": "Left-click restores the last saved window layout; right-click lists saved layouts. Layouts are defined with the bundled CLI (from a screenshot or the current desktop) and stored with relative geometry, so they work at any resolution.",
+    "displayName": "Saved desktop layout",
+    "description": "Left-click restores your saved desktop: every assigned app launches and lands at its stored position, ready to work. Right-click lists saved layouts. Define layouts with the bundled CLI (from a screenshot or the current desktop); geometry is relative, so it works at any resolution.",
     "category": "Compositor",
     "allowMultiple": false,
     "defaultSection": "right"

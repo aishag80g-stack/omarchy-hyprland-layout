@@ -1,7 +1,9 @@
-# Hyprland layout restore
+# Saved desktop layouts
 
-Define a window layout by **pasting a screenshot** of your desktop, then restore
-that exact arrangement any time — from the bar or a keybind.
+Save your desktop — the arrangement **and the apps assigned to it** — by
+pasting a screenshot or snapshotting what is on screen. Then one click on the
+bar (or a hotkey) brings it all back: missing apps launch, every window lands
+exactly where you left it. Desktop ready to work.
 
 The bundled CLI (`bin/omarchy-hyprland-layout`) works on any Hyprland with the
 Lua config API (Omarchy). Geometry is stored **relative** (percent of the
@@ -15,7 +17,7 @@ omarchy-hyprland-layout from-image screenshot.png my-setup
 #    A vision model detects every window region; you tell it which app
 #    belongs in each one (by name if it is running, or a launch command).
 
-# 2. Restore it — windows are moved, sized and launched to match:
+# 2. Restore it — assigned apps launch and land exactly where they belong:
 omarchy-hyprland-layout restore my-setup
 
 # Other commands:
