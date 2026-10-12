@@ -1,13 +1,15 @@
 # Saved desktop layouts
 
-![Saved desktop layouts — one click restores your favorite desktop](preview.png)
+![Saved desktop layouts — a hotkey restores your favorite desktop](preview.png)
 
 Your ideal desktop shouldn't be a ritual of opening, dragging and resizing
 every app by hand — every single time. Save your favorite arrangement once,
-from a screenshot or your live desktop, and one click brings it back: missing
+from a screenshot or your live desktop, then bring it back without touching
+the mouse: bind a hotkey (or one click on the bar, if you like) and missing
 apps launch on their own, every window lands exactly where you placed it, at
 exactly the size you set. Keep a saved layout for each thing you do — work,
-study, gaming — and switch your whole desktop in one click, not ten minutes.
+study, gaming — and switch your whole desktop with a keystroke, not ten
+minutes.
 
 The bundled CLI (`bin/omarchy-hyprland-layout`) works on any Hyprland with the
 Lua config API (Omarchy). Geometry is stored **relative** (percent of the
