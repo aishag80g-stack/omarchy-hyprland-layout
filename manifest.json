@@ -4,7 +4,7 @@
   "name": "Saved desktop layouts",
   "version": "1.0.0",
   "author": "aishag80g-stack",
-  "description": "Restore your favorite desktop from the keyboard: one hotkey launches your apps and places every window at its saved size. A layout per workspace.",
+  "description": "One hotkey restores your favorite desktop: apps launch, windows land in place at their saved size. Works on any Hyprland — Omarchy, Fedora, Arch.",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Saved desktop layout",
-    "description": "Your ideal desktop shouldn't be a ritual of opening, dragging and resizing every app by hand — every single time. Save your favorite arrangement once, from a screenshot or your live desktop, then bring it back without touching the mouse: bind a hotkey (or one click on the bar, if you like) and missing apps launch on their own, every window lands exactly where you placed it, at exactly the size you set. Keep a saved layout for each thing you do — work, study, gaming — and switch your whole desktop with a keystroke, not ten minutes.",
+    "description": "If you rebuild your workspace by hand every day — open the apps, drag the windows, resize everything — you need this. Save your favorite arrangement once, from a screenshot or your live desktop, then bring it back without touching the mouse: bind a hotkey (or one click on the bar, if you like) and missing apps launch on their own, every window lands exactly where you placed it, at exactly the size you set. Keep a saved layout for each thing you do — work, study, gaming — and switch your whole desktop with a keystroke, not ten minutes. Any Hyprland, any distro: the CLI works on vanilla Hyprland, Fedora, Arch — geometry is relative, so it works at any resolution. The bar widget is Omarchy's; the hotkey is everyone's.",
     "category": "Compositor",
     "allowMultiple": false,
     "defaultSection": "right"

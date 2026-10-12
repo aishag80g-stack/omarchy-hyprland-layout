@@ -11,9 +11,18 @@ exactly the size you set. Keep a saved layout for each thing you do — work,
 study, gaming — and switch your whole desktop with a keystroke, not ten
 minutes.
 
-The bundled CLI (`bin/omarchy-hyprland-layout`) works on any Hyprland with the
-Lua config API (Omarchy). Geometry is stored **relative** (percent of the
-monitor), so a layout defined on one screen works at any resolution.
+The bundled CLI (`bin/omarchy-hyprland-layout`) works on **any Hyprland, on
+any distro** — Omarchy, vanilla Hyprland, Fedora, Arch. It only needs
+`hyprctl`, `jq` and `curl` (plus ImageMagick for `from-image`). Geometry is stored **relative** (percent of the
+monitor), so a layout defined on one screen works at any resolution. Only the
+bar widget is Omarchy-specific; the hotkey is everyone's.
+
+If you rebuild your workspace by hand every day — open the apps, drag the
+windows, resize everything — you need this. Try it in one command:
+
+```bash
+omarchy-hyprland-layout save my-desktop && omarchy-hyprland-layout restore-last
+```
 
 ## How it works
 
@@ -55,6 +64,12 @@ Then add the widget to your bar (Omarchy menu → Bar → Widgets →
 
 ```lua
 o.bind("SUPER, T", "exec", "~/.config/omarchy/plugins/io.github.aishag80g-stack.hyprland-layout/bin/omarchy-hyprland-layout restore-last")
+```
+
+On vanilla Hyprland, the same binding in `hyprland.conf`:
+
+```
+bind = SUPER, T, exec, /path/to/bin/omarchy-hyprland-layout restore-last
 ```
 
 ## Remove
