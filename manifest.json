@@ -4,7 +4,7 @@
   "name": "Saved desktop layouts",
   "version": "1.0.0",
   "author": "aishag80g-stack",
-  "description": "Save your desktop with its apps — from a screenshot or live — and restore it with one click: apps launch and land exactly where you left them, desktop ready to work.",
+  "description": "One click restores your favorite desktop: apps launch, windows land in place at their saved size. A layout for each workspace — work, study, play.",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Saved desktop layout",
-    "description": "Left-click restores your saved desktop: every assigned app launches and lands at its stored position, ready to work. Right-click lists saved layouts. Define layouts with the bundled CLI (from a screenshot or the current desktop); geometry is relative, so it works at any resolution.",
+    "description": "Left-click restores your saved desktop: missing apps launch on their own, every window lands exactly where you placed it, at exactly the size you set. Keep a saved layout for each thing you do — work, study, gaming — and switch your whole desktop in one click. Define layouts with the bundled CLI (from a screenshot or the current desktop); geometry is relative, so it works at any resolution.",
     "category": "Compositor",
     "allowMultiple": false,
     "defaultSection": "right"
