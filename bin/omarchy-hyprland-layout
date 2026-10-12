@@ -66,7 +66,9 @@ cmd_save() {
     [[ -z "$pid" ]] && continue
     local cmd=""
     if [[ -r "/proc/$pid/cmdline" ]]; then
-      cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" | sed 's/ *$//')
+      # shell-quote each argument: joining with spaces loses quoting and
+      # `sh -c "a; b"` would relaunch broken (the window dies instantly)
+      cmd=$(tr '\0' '\n' < "/proc/$pid/cmdline" | head -50 | while IFS= read -r a; do printf '%q ' "$a"; done | sed 's/ *$//')
     fi
     [[ -n "$cmd" ]] && printf '%s\t%s\n' "$pid" "$cmd" >> "$cmdmap"
   done < "$tmpdir/pids"
@@ -245,6 +247,8 @@ cmd_restore() {
   local name="${1:-}"; valid_name "$name"
   local file="$LAYOUTS_DIR/$name.json"
   [[ -f "$file" ]] || die "no layout named '$name' (list them with: omarchy-hyprland-layout list)"
+  local launch_dir; launch_dir=$(mktemp -d)   # temp launch scripts (private)
+  trap 'rm -rf "$launch_dir"' RETURN
 
   local relative; relative=$(jq -r '.relative // false' "$file")
 
@@ -266,6 +270,8 @@ cmd_restore() {
 
   # 2. Place each window.
   local total; total=$(jq '.windows | length' "$file")
+  local used="[]"   # addresses already claimed by this layout: same-class
+                    # windows must each match a DIFFERENT window
   local k
   for ((k=0; k<total; k++)); do
     local wclass wtitle wws x y w h floating pinned launch
@@ -287,18 +293,23 @@ cmd_restore() {
     local addr=""
     if [[ -n "$wclass" ]]; then
       if [[ -n "$wtitle" ]]; then
-        addr=$(clients | jq -r --arg c "$wclass" --arg t "$wtitle" \
-          'first(.[] | select(.initialClass==$c and .title==$t)) | .address')
+        addr=$(clients | jq -r --arg c "$wclass" --arg t "$wtitle" --argjson used "$used" \
+          'first(.[] | select((.initialClass==$c and .title==$t) and ((.address|tostring) as $a | ($used | index($a)) | not))) | .address')
       fi
-      [[ -z "$addr" ]] && addr=$(clients | jq -r --arg c "$wclass" \
-        'first(.[] | select(.initialClass==$c and .workspace.id=='"$wws"')) | .address')
-      [[ -z "$addr" ]] && addr=$(clients | jq -r --arg c "$wclass" \
-        'first(.[] | select(.initialClass==$c)) | .address')
+      [[ -z "$addr" ]] && addr=$(clients | jq -r --arg c "$wclass" --argjson used "$used" \
+        'first(.[] | select((.initialClass==$c and .workspace.id=='"$wws"') and ((.address|tostring) as $a | ($used | index($a)) | not))) | .address')
+      [[ -z "$addr" ]] && addr=$(clients | jq -r --arg c "$wclass" --argjson used "$used" \
+        'first(.[] | select((.initialClass==$c) and ((.address|tostring) as $a | ($used | index($a)) | not))) | .address')
       if [[ -z "$addr" && -n "$launch" ]]; then
-        dsp "exec_cmd(\"[workspace $wws] $launch\")"
+        # run the launch command through a temp script: Hyprland's exec
+        # parser mangles shell metacharacters and quoting in the raw string
+        local sfile="$launch_dir/w$k.sh"
+        printf '#!/bin/sh\n%s\n' "$launch" > "$sfile"; chmod +x "$sfile"
+        dsp "exec_cmd(\"[workspace $wws] $sfile\")"
         local t=0
         while (( t < 40 )); do
-          addr=$(clients | jq -r --arg c "$wclass" 'first(.[] | select(.initialClass==$c)) | .address')
+          addr=$(clients | jq -r --arg c "$wclass" --argjson used "$used" \
+            'first(.[] | select((.initialClass==$c) and ((.address|tostring) as $a | ($used | index($a)) | not))) | .address')
           [[ -n "$addr" ]] && break
           sleep 0.3; ((t++))
         done
@@ -306,7 +317,9 @@ cmd_restore() {
     elif [[ -n "$launch" ]]; then
       # app unknown at save time: launch it, then grab the newest window
       local before; before=$(clients | jq -r '.[].address' | sort)
-      dsp "exec_cmd(\"[workspace $wws] $launch\")"
+      local sfile2="$launch_dir/w2-$k.sh"
+      printf '#!/bin/sh\n%s\n' "$launch" > "$sfile2"; chmod +x "$sfile2"
+      dsp "exec_cmd(\"[workspace $wws] $sfile2\")"
       local t=0
       while (( t < 40 )); do
         addr=$(clients | jq -r --arg b "$before" '[.[] | .address] as $now | ($now - ($b | split("\n")))[0] // empty' <<<"$(clients)" 2>/dev/null)
@@ -316,6 +329,7 @@ cmd_restore() {
       done
     fi
     [[ -z "$addr" ]] && continue
+    used=$(jq -c --arg a "$addr" '. + [$a]' <<<"$used")
 
     dsp "window.move({window='address:$addr', workspace=$wws})"
     sleep 0.15
