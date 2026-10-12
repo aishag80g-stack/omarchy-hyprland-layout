@@ -1,5 +1,7 @@
 # Saved desktop layouts
 
+![Saved desktop layouts — one click restores your favorite desktop](preview.png)
+
 Your ideal desktop shouldn't be a ritual of opening, dragging and resizing
 every app by hand — every single time. Save your favorite arrangement once,
 from a screenshot or your live desktop, and one click brings it back: missing
