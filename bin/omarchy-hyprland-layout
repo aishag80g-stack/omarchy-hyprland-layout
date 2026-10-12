@@ -57,19 +57,34 @@ cmd_save() {
   # private temp dir: window titles/classes must not be world-readable (0700)
   local tmpdir; tmpdir=$(mktemp -d)
   tmp="$tmpdir/win"
+  # record each window's launch command from its pid so restore can relaunch
+  # apps that are closed at restore time
+  local cmdmap="$tmpdir/cmds"
+  clients | jq -r '.[] | select(.pid != null) | "\(.pid)\t\(.initialClass)"' | sort -u > "$tmpdir/pids"
+  : > "$cmdmap"
+  while IFS=$'\t' read -r pid cls; do
+    [[ -z "$pid" ]] && continue
+    local cmd=""
+    if [[ -r "/proc/$pid/cmdline" ]]; then
+      cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" | sed 's/ *$//')
+    fi
+    [[ -n "$cmd" ]] && printf '%s\t%s\n' "$pid" "$cmd" >> "$cmdmap"
+  done < "$tmpdir/pids"
+  local jqcmds
+  jqcmds=$(jq -Rn '[inputs | split("\t") | {(.[0]): .[1]}] | add // {}' "$cmdmap")
   if [[ -n "$all" ]]; then
-    monitors | jq '[.[] | {name, position, width, height}]' > "$tmp.mon"
-    clients | jq '[.[] | select(.fullscreen==false) | {
+    monitors | jq '[.[] | {name, position: (.position // [.x, .y]), width, height}]' > "$tmp.mon"
+    clients | jq --argjson cmds "$jqcmds" '[.[] | select((.fullscreen|tonumber)==0) | {
       class: .initialClass, title, workspace: .workspace.id, monitor,
       at, size, floating: (.floating==true), pinned: (.pinned==true),
-      launch: null
+      launch: ($cmds[(.pid|tostring)] // null)
     }]' > "$tmp.win"
   else
-    monitors | jq --arg m "$amon" '[.[] | select(.name==$m) | {name, position, width, height}]' > "$tmp.mon"
-    clients | jq --arg m "$amon" '[.[] | select(.monitor==$m and .fullscreen==false) | {
+    monitors | jq --arg m "$amon" '[.[] | select(.name==$m) | {name, position: (.position // [.x, .y]), width, height}]' > "$tmp.mon"
+    clients | jq --arg m "$amon" --argjson cmds "$jqcmds" '[.[] | select(.monitor==$m and (.fullscreen|tonumber)==0) | {
       class: .initialClass, title, workspace: .workspace.id, monitor,
       at, size, floating: (.floating==true), pinned: (.pinned==true),
-      launch: null
+      launch: ($cmds[(.pid|tostring)] // null)
     }]' > "$tmp.win"
   fi
   jq -n --slurpfile mon "$tmp.mon" --slurpfile win "$tmp.win" --arg name "$name" \
