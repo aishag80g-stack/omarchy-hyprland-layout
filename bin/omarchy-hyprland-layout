@@ -55,7 +55,7 @@ cmd_save() {
 
   local file="$LAYOUTS_DIR/$name.json" tmp
   # private temp dir: window titles/classes must not be world-readable (0700)
-  tmpdir=$(mktemp -d)
+  local tmpdir; tmpdir=$(mktemp -d)
   tmp="$tmpdir/win"
   if [[ -n "$all" ]]; then
     monitors | jq '[.[] | {name, position, width, height}]' > "$tmp.mon"
@@ -98,7 +98,7 @@ describe_pos() { # x y w h (0..1) -> human position
 }
 
 ask_vision() { # $1 = image path -> prints strict JSON {windows:[...]}
-  local img="$1" b64 model
+  local img="$1" model
   model="$VISION_MODEL"
   if [[ -z "$model" ]]; then
     model=$(curl -sf --max-time 10 "$VISION_URL/models" | jq -r '.data[0].id // empty')
@@ -149,7 +149,8 @@ cmd_from_image() {
   echo "Detected $n windows. Tell me which app belongs in each one." >&2
   echo "(type the app name if it is running — I will recognize it — or the command to launch it; Enter to skip)" >&2
 
-  local ws; ws=$(hyprctl activeworkspace -j | jq -r '.id')
+  local ws; ws=$(hyprctl activeworkspace -j 2>/dev/null | cat | jq -r '.id')
+  [[ "$ws" =~ ^[0-9]+$ ]] || ws=1   # keep --argjson happy if hyprctl gave nothing
   local out="$LAYOUTS_DIR/$name.json" tmp
   local tmpdir; tmpdir=$(mktemp -d)   # private: holds app names/classes
   tmp="$tmpdir/win"
@@ -176,7 +177,7 @@ cmd_from_image() {
     [[ -n "$title" ]] && hint="$hint — title: $title"
 
     local answer=""
-    read -rp "Ventana $((i+1)) [$pos, ${w}x${h}]$hint → app: " answer
+    read -rp "Window $((i+1)) [$pos, ${w}x${h}]$hint → app: " answer
     [[ -z "$answer" ]] && continue
 
     # try to match a running window by class or title substring

@@ -11,8 +11,9 @@ exactly the size you set. Keep a saved layout for each thing you do — work,
 study, gaming — and switch your whole desktop with a keystroke, not ten
 minutes.
 
-The bundled CLI (`bin/omarchy-hyprland-layout`) works on **any Hyprland, on
-any distro** — Omarchy, vanilla Hyprland, Fedora, Arch. It only needs
+The bundled CLI (`bin/omarchy-hyprland-layout`, also invocable as
+`hyprland-layout`) works on **any Hyprland, on any distro** — Omarchy,
+vanilla Hyprland, Fedora, Arch. It only needs
 `hyprctl`, `jq` and `curl` (plus ImageMagick for `from-image`). Geometry is stored **relative** (percent of the
 monitor), so a layout defined on one screen works at any resolution. Only the
 bar widget is Omarchy-specific; the hotkey is everyone's.
@@ -59,7 +60,7 @@ omarchy plugin add https://github.com/aishag80g-stack/omarchy-hyprland-layout --
 ```
 
 Then add the widget to your bar (Omarchy menu → Bar → Widgets →
-"Window layout restore"), or bind the CLI to a key directly, e.g. in
+"Saved desktop layout"), or bind the CLI to a key directly, e.g. in
 `~/.config/hypr/bindings.lua`:
 
 ```lua
@@ -69,8 +70,19 @@ o.bind("SUPER, T", "exec", "~/.config/omarchy/plugins/io.github.aishag80g-stack.
 On vanilla Hyprland, the same binding in `hyprland.conf`:
 
 ```
-bind = SUPER, T, exec, /path/to/bin/omarchy-hyprland-layout restore-last
+bind = SUPER, T, exec, /path/to/bin/hyprland-layout restore-last
 ```
+
+## Troubleshooting
+
+- `from-image` fails with "no vision model available" → the endpoint at
+  `OMARCHY_LAYOUT_VISION_URL` is not answering. Start LM Studio (or point the
+  variable at any OpenAI-compatible vision endpoint). `save` / `restore` never
+  need a model.
+- A restored window lands slightly off → some apps clamp their minimum size
+  (Chrome floors at 500px, for example); that is the app, not the layout.
+- Nothing moves when you press the hotkey → the script path in your binding
+  must be absolute; Hyprland does not expand `~` in exec arguments.
 
 ## Remove
 
