@@ -1,1 +1,3 @@
-omarchy-hyprland-layout
+#!/bin/sh
+# Cross-distro alias (no symlink: marketplace forbids symlinks in plugin folders)
+exec "$(dirname "$0")/omarchy-hyprland-layout" "$@"
