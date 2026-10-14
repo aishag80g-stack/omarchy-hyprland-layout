@@ -293,7 +293,10 @@ cmd_restore() {
     local addr=""
     if [[ -n "$wclass" ]]; then
       if [[ -n "$wtitle" ]]; then
-        addr=$(clients | jq -r --arg c "$wclass" --arg t "$wtitle" --argjson used "$used" \
+        # the title goes to jq via a file descriptor, NOT --arg:
+        # /proc/<pid>/cmdline is world-readable, so --arg would leak saved
+        # window titles to any local user during restore
+        addr=$(clients | jq -r --arg c "$wclass" --rawfile t <(printf '%s' "$wtitle") --argjson used "$used" \
           'first(.[] | select((.initialClass==$c and .title==$t) and ((.address|tostring) as $a | ($used | index($a)) | not))) | .address')
       fi
       [[ -z "$addr" ]] && addr=$(clients | jq -r --arg c "$wclass" --argjson used "$used" \
